@@ -10,8 +10,14 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     base44.auth.me()
-      .then(() => setIsLoadingAuth(false))
-      .catch(() => setIsLoadingAuth(false));
+      .then(() => {
+        setAuthError(null);
+        setIsLoadingAuth(false);
+      })
+      .catch((e) => {
+        if (e?.status === 401) setAuthError({ type: 'auth_required' });
+        setIsLoadingAuth(false);
+      });
   }, []);
 
   const navigateToLogin = () => base44.auth.redirectToLogin();

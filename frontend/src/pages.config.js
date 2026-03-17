@@ -9,6 +9,7 @@ import Settings from './pages/Settings';
 import Templates from './pages/Templates';
 import Welcome from './pages/Welcome';
 import ImageGenerator from './pages/ImageGenerator';
+import Login from './pages/Login';
 import __Layout from './Layout.jsx';
 
 export const PAGES = {
@@ -22,6 +23,7 @@ export const PAGES = {
   "Settings": Settings,
   "Templates": Templates,
   "Welcome": Welcome,
+  "Login": Login,
   "ImageGenerator": ImageGenerator,
 };
 
