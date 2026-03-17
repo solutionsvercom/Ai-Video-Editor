@@ -8,9 +8,11 @@ import { Card } from "@/components/ui/card";
 import { toast } from "sonner";
 import { base44 } from "@/api/base44Client";
 import { createPageUrl } from "@/utils";
+import { useAuth } from "@/lib/AuthContext";
 
 export default function Login() {
   const navigate = useNavigate();
+  const { refreshAuth } = useAuth();
   const [mode, setMode] = useState("login"); // login | register
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -28,6 +30,7 @@ export default function Login() {
         await base44.auth.login({ email, password });
         toast.success("Signed in successfully.");
       }
+      await refreshAuth();
       navigate(createPageUrl("Dashboard"));
     } catch (err) {
       toast.error(err?.payload?.error || err?.message || "Authentication failed");

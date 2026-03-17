@@ -4,6 +4,7 @@ import { queryClientInstance } from '@/lib/query-client'
 import NavigationTracker from '@/lib/NavigationTracker'
 import { pagesConfig } from './pages.config'
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
@@ -18,6 +19,9 @@ const LayoutWrapper = ({ children, currentPageName }) => Layout
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
+  const location = useLocation();
+  const pathname = location?.pathname || '/';
+  const isPublicRoute = pathname === '/' || pathname === '/Welcome' || pathname === '/Login';
 
   if (isLoadingPublicSettings || isLoadingAuth) {
     return (
@@ -29,7 +33,7 @@ const AuthenticatedApp = () => {
 
   if (authError) {
     if (authError.type === 'user_not_registered') return <UserNotRegisteredError />;
-    else if (authError.type === 'auth_required') { navigateToLogin(); return null; }
+    else if (authError.type === 'auth_required' && !isPublicRoute) { navigateToLogin(); return null; }
   }
 
   return (

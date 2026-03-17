@@ -7,23 +7,31 @@ export function AuthProvider({ children }) {
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
   const [isLoadingPublicSettings, setIsLoadingPublicSettings] = useState(false);
   const [authError, setAuthError] = useState(null);
+  const [user, setUser] = useState(null);
+
+  const refreshAuth = async () => {
+    setIsLoadingAuth(true);
+    try {
+      const me = await base44.auth.me();
+      setUser(me);
+      setAuthError(null);
+    } catch (e) {
+      setUser(null);
+      if (e?.status === 401) setAuthError({ type: 'auth_required' });
+    } finally {
+      setIsLoadingAuth(false);
+    }
+  };
 
   useEffect(() => {
-    base44.auth.me()
-      .then(() => {
-        setAuthError(null);
-        setIsLoadingAuth(false);
-      })
-      .catch((e) => {
-        if (e?.status === 401) setAuthError({ type: 'auth_required' });
-        setIsLoadingAuth(false);
-      });
+    refreshAuth();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const navigateToLogin = () => base44.auth.redirectToLogin();
 
   return (
-    <AuthContext.Provider value={{ isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin }}>
+    <AuthContext.Provider value={{ isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin, refreshAuth, user }}>
       {children}
     </AuthContext.Provider>
   );
