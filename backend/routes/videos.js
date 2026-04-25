@@ -2,9 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { authMiddleware } = require('./auth');
 const { createRecord } = require('../lib/store');
-const OpenAI = require('openai');
-
-const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
+const { generateStructuredText, generateVideoWithOpenAI, buildVideoPrompt, getApiKeyForProvider } = require('../lib/aiClient');
 
 function buildFallbackScenes({ type, prompt }) {
   const base = prompt?.trim() || 'Your video';
@@ -72,11 +70,7 @@ function normalizeScenes(rawScenes, { maxScenes, maxTotalDurationSec }) {
   return cleaned;
 }
 
-async function generateStoryboardWithOpenAI({ type, prompt, settings, aspect_ratio, maxScenes, maxTotalDurationSec }) {
-  if (!openai) return null;
-
-  const model = process.env.VIDEO_STORY_MODEL || 'gpt-4o-mini';
-
+async function generateStoryboardWithAI({ type, prompt, settings, aspect_ratio, maxScenes, maxTotalDurationSec }) {
   const schema = {
     type: 'object',
     additionalProperties: false,
@@ -86,7 +80,7 @@ async function generateStoryboardWithOpenAI({ type, prompt, settings, aspect_rat
         type: 'array',
         items: {
           type: 'object',
-          additionalProperties: true,
+          additionalProperties: false,
           properties: {
             title: { type: 'string' },
             narration: { type: 'string' },
@@ -96,7 +90,16 @@ async function generateStoryboardWithOpenAI({ type, prompt, settings, aspect_rat
             duration_sec: { type: 'number' },
             transition: { type: 'string' },
           },
-          required: ['title', 'visual_description', 'image_prompt', 'duration_sec'],
+          // OpenAI strict json_schema: every property key must appear in `required`.
+          required: [
+            'title',
+            'narration',
+            'on_screen_text',
+            'visual_description',
+            'image_prompt',
+            'duration_sec',
+            'transition',
+          ],
         },
       },
     },
@@ -105,7 +108,8 @@ async function generateStoryboardWithOpenAI({ type, prompt, settings, aspect_rat
 
   const system = [
     'You are a senior video editor and storyboard artist.',
-    'Return ONLY valid JSON.',
+    'Return ONLY valid JSON matching the schema.',
+    'Every scene object must include all keys; use empty string for narration, on_screen_text, or transition when not needed.',
     'Make image prompts descriptive and consistent in style.',
     'Keep scenes concise and production-ready.',
   ].join(' ');
@@ -123,31 +127,13 @@ async function generateStoryboardWithOpenAI({ type, prompt, settings, aspect_rat
     `Output JSON matching this schema: ${JSON.stringify(schema)}`,
   ].join('\n');
 
-  const completion = await openai.chat.completions.create({
-    model,
-    messages: [
-      { role: 'system', content: system },
-      { role: 'user', content: user },
-    ],
-    response_format: { type: 'json_object' },
-    temperature: 0.7,
-  });
-
-  const content = completion.choices?.[0]?.message?.content;
-  if (!content) return null;
-
-  let parsed;
-  try {
-    parsed = JSON.parse(content);
-  } catch {
-    return null;
-  }
+  const { provider, parsed } = await generateStructuredText({ system, user, schema, temperature: 0.7 });
 
   const scenes = normalizeScenes(parsed.scenes, { maxScenes, maxTotalDurationSec });
   if (!scenes?.length) return null;
 
   const title = typeof parsed.title === 'string' && parsed.title.trim() ? parsed.title.trim().slice(0, 80) : null;
-  return { title, scenes };
+  return { title, scenes, provider };
 }
 
 // POST /api/videos/generate
@@ -171,17 +157,46 @@ router.post('/generate', authMiddleware, async (req, res) => {
   let generatedTitle = null;
   let storyboard_source = 'fallback';
   try {
-    const storyboard = await generateStoryboardWithOpenAI({ type, prompt, settings, aspect_ratio, maxScenes, maxTotalDurationSec });
+    const storyboard = await generateStoryboardWithAI({ type, prompt, settings, aspect_ratio, maxScenes, maxTotalDurationSec });
     if (storyboard) {
       scenes = storyboard.scenes;
       generatedTitle = storyboard.title;
-      storyboard_source = 'openai';
+      storyboard_source = storyboard.provider;
     }
   } catch (e) {
-    console.warn('[videos.generate] OpenAI storyboard generation failed, falling back.', e?.message || e);
+    console.warn('[videos.generate] Storyboard generation failed, falling back.', e?.message || e);
   }
 
   if (!scenes) scenes = buildFallbackScenes({ type, prompt });
+
+  let video_url = null;
+  let video_source = null;
+  let video_error = null;
+  if (getApiKeyForProvider('openai')) {
+    try {
+      const videoPrompt = buildVideoPrompt({ prompt, title: generatedTitle, scenes });
+      const videoAspect = aspect_ratio === '9:16' ? '9:16' : '16:9';
+      const rawSeconds =
+        settings.videoSeconds ??
+        settings.video_seconds ??
+        settings.veoDurationSec ??
+        settings.veo_duration_sec ??
+        8;
+      const videoSeconds = clampNumber(rawSeconds, { min: 4, max: 12, fallback: 8 });
+      const out = await generateVideoWithOpenAI({
+        prompt: videoPrompt,
+        aspectRatio: videoAspect,
+        durationSeconds: videoSeconds,
+      });
+      video_url = out.publicUrl;
+      video_source = out.model;
+    } catch (e) {
+      video_error = e?.message || String(e);
+      console.warn('[videos.generate] OpenAI video generation failed.', video_error);
+    }
+  } else {
+    video_error = 'Set OPENAI_API_KEY in backend/.env to enable OpenAI video generation (Videos / Sora API).';
+  }
 
   const project = createRecord(
     'Project',
@@ -195,6 +210,9 @@ router.post('/generate', authMiddleware, async (req, res) => {
       assets: {
         audio_url,
         image_urls,
+        video_url,
+        video_source,
+        ...(video_error ? { video_error } : {}),
       },
       settings,
     },
@@ -205,4 +223,3 @@ router.post('/generate', authMiddleware, async (req, res) => {
 });
 
 module.exports = router;
-

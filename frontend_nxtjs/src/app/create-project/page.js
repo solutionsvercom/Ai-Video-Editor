@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
 import { createPageUrl } from '@/utils';
 import { base44 } from '@/api/base44Client';
+import { uploadFile } from '@/api/integrationsApi';
 import TypeSelector from '@/components/create/TypeSelector';
 import TextPromptInput from '@/components/create/TextPromptInput';
 import VoiceInput from '@/components/create/VoiceInput';
@@ -34,7 +35,7 @@ export default function CreateProject() {
           toast.error('Please upload an audio file first');
           return;
         }
-        const uploaded = await base44.integrations.Core.UploadFile({ file: audioFile });
+        const uploaded = await uploadFile({ file: audioFile });
         audio_url = uploaded.file_url;
       }
 
@@ -43,7 +44,7 @@ export default function CreateProject() {
           toast.error('Please upload at least one image first');
           return;
         }
-        const uploads = await Promise.all(images.map((file) => base44.integrations.Core.UploadFile({ file })));
+        const uploads = await Promise.all(images.map((file) => uploadFile({ file })));
         image_urls = uploads.map((u) => u.file_url);
       }
 

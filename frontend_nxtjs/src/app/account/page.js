@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
+import { uploadFile } from '@/api/integrationsApi';
 import { motion } from 'framer-motion';
 import { User, Camera, Crown, CreditCard, Video, Zap, CheckCircle2, Loader2 } from 'lucide-react';
 import { Button } from "@/components/ui/button";
@@ -46,7 +47,7 @@ export default function Account() {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      const { file_url } = await base44.integrations.Core.UploadFile({ file });
+      const { file_url } = await uploadFile({ file });
       setFormData(prev => ({ ...prev, avatar_url: file_url }));
     } catch (error) {
       toast.error('Failed to upload image');

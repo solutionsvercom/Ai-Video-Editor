@@ -1,65 +1,66 @@
 const express = require('express');
 const router = express.Router();
 const { authMiddleware } = require('./auth');
-const OpenAI = require('openai');
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const { invokeLLM } = require('../lib/aiClient');
+const { generateAndPersistImage } = require('../services/imageGenerationService');
 
 // POST /api/integrations/llm - InvokeLLM
 router.post('/llm', authMiddleware, async (req, res) => {
-  const { prompt, response_json_schema, add_context_from_internet, model } = req.body;
-
-  const systemPrompt = response_json_schema
-    ? 'You are a helpful AI assistant. Respond ONLY with valid JSON matching the provided schema.'
-    : 'You are a helpful AI assistant.';
-
-  const userPrompt = response_json_schema
-    ? `${prompt}\n\nRespond with JSON matching this schema: ${JSON.stringify(response_json_schema)}`
-    : prompt;
-
-  const gptModel = model === 'claude_sonnet_4_6' ? 'gpt-4o' : 'gpt-4o-mini';
-
-  const completion = await openai.chat.completions.create({
-    model: gptModel,
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt },
-    ],
-    response_format: response_json_schema ? { type: 'json_object' } : undefined,
-  });
-
-  const content = completion.choices[0].message.content;
-
-  if (response_json_schema) {
-    res.json(JSON.parse(content));
-  } else {
-    res.json(content);
+  try {
+    const { prompt, response_json_schema, model } = req.body;
+    const output = await invokeLLM({
+      prompt,
+      responseJsonSchema: response_json_schema,
+      model,
+    });
+    res.json(output);
+  } catch (e) {
+    const message = e?.message || 'LLM request failed';
+    const status = /Missing .*API key|Prompt is required/i.test(message) ? 400 : 502;
+    res.status(status).json({ error: message });
   }
 });
 
-// POST /api/integrations/generate-image - GenerateImage
+// POST /api/integrations/generate-image — legacy path; same pipeline as POST /api/images/generate
 router.post('/generate-image', authMiddleware, async (req, res) => {
-  const { prompt, existing_image_urls } = req.body;
+  const { prompt, size, quality, output_format, aspect_ratio } = req.body || {};
+  console.log('[generate-image] incoming prompt:', prompt);
+  if (!prompt || !String(prompt).trim()) {
+    return res.status(400).json({ error: 'Prompt is required' });
+  }
 
-  const response = await openai.images.generate({
-    model: 'dall-e-3',
-    prompt,
-    n: 1,
-    size: '1024x1024',
-  });
-
-  res.json({ url: response.data[0].url });
+  try {
+    const { existing_image_urls, reference_image_url, input_fidelity } = req.body || {};
+    const result = await generateAndPersistImage({
+      prompt: String(prompt).trim(),
+      size,
+      quality,
+      output_format,
+      aspect_ratio,
+      existing_image_urls,
+      reference_image_url,
+      input_fidelity,
+    });
+    res.json({ url: result.url });
+  } catch (e) {
+    const message = e?.message || 'Image generation failed';
+    console.error('[generate-image]', message);
+    if (/Prompt must|Invalid |exceeds maximum|Could not use the reference|Too many reference/i.test(message)) {
+      return res.status(400).json({ error: message });
+    }
+    const status = /Missing .*API key/i.test(message) ? 503 : 502;
+    res.status(status).json({ error: message });
+  }
 });
 
 // POST /api/integrations/send-email - SendEmail
 router.post('/send-email', authMiddleware, async (req, res) => {
   const { to, subject, body, from_name } = req.body;
 
-  // Requires nodemailer configured with SMTP env vars
   const nodemailer = require('nodemailer');
   const transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST,
-    port: parseInt(process.env.SMTP_PORT || '587'),
+    port: parseInt(process.env.SMTP_PORT || '587', 10),
     auth: {
       user: process.env.SMTP_USER,
       pass: process.env.SMTP_PASS,
